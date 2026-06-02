@@ -1258,7 +1258,6 @@ xferBenchNixlWorker::exchangeIOV(const std::vector<std::vector<xferBenchIOV>> &l
                         } else {
                             file_offset += block_size;
                         }
-                        file_offset += block_size;
                         fd_idx = 0;
                     }
                 }
