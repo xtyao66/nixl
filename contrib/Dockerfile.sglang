@@ -23,3 +23,14 @@ RUN set -eux; \
     ls -lah /tmp/nixl-wheels/*.whl ; \
     pip install --no-cache-dir --no-deps --force-reinstall /tmp/nixl-wheels/*.whl; \
     rm -rf /tmp/nixl-wheels
+
+# Disaggregation sanity helper. SGLang's PD-disaggregation launcher ships in the
+# image (sglang.srt.disaggregation); resolve and record its location so the sanity
+# test script (.gitlab/test_vllm_sglang_sanity.sh) does not have to discover it at
+# runtime. This is the SGLang analogue of the toy_proxy_server.py that
+# contrib/Dockerfile.vllm fetches for the vLLM disagg test.
+RUN python3 - <<'PY'
+import importlib
+m = importlib.import_module("sglang.srt.disaggregation")
+print("sglang disaggregation module:", m.__file__)
+PY

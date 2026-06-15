@@ -1,0 +1,121 @@
+# vLLM / SGLang NIXL disaggregation sanity matrix — aarch64 on dlcluster / GB200.
+#
+# Mirrors test-dl-matrix.yaml (same dlcluster SSH + account allocate-run-stop pattern).
+# The x86_64 counterpart lives in test-vllm-sglang-matrix.yaml (mizu). One file per
+# cluster keeps per-cluster auth and teardown clean.
+#
+# Consumes the per-PR image built+pushed by nixl-ci-build-wheel:
+#   <registry>/ci/pr/aarch64/<framework>-nixl:<sha1>
+#
+# Note: changes to this file are tested as part of the PR CI flow.
+
+---
+job: nixl-ci-vllm-sglang-dl
+
+failFast: false
+timeout_minutes: 120
+
+registry_host: artifactory.nvidia.com
+registry_auth: svc-nixl-new-artifactory-token
+registry_path: /sw-nbu-swx-nixl-docker-local/ci
+
+kubernetes:
+  cloud: il-ipp-blossom-prod
+  namespace: nbu-swx-nixl
+  imagePullSecrets: "['artifactory-pull-secret']"
+  limits: "{memory: 16Gi, cpu: 16000m}"
+  requests: "{memory: 8Gi, cpu: 8000m}"
+  privileged: true
+
+credentials:
+  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+
+env:
+  ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
+  SLURM_NODES: 1
+  SLURM_PARTITION: gb200nvl72_ci
+  SLURM_HEAD_NODE: dlcluster.nvidia.com
+  SLURM_HEAD_USER: svc-nixl
+  SLURM_ACCOUNT: 'oberon-gb-ci'
+  SLURM_GRES: gpu:2
+  SLURM_JOB_TIMEOUT: '01:30:00'
+  SLURM_IMMEDIATE_TIMEOUT: 3600
+  SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
+  JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
+  STORAGE_DRIVER: overlay
+  CI_IMAGE_TAG: "20260604-1"
+
+empty_volumes:
+  - {mountPath: /var/lib/containers/storage, memory: false}
+
+pvc_volumes:
+  - {claimName: nbu-swx-nixl-pvc, mountPath: /mnt/pvc, readOnly: false}
+
+runs_on_dockers:
+  - {
+      file: '.ci/dockerfiles/Dockerfile.build_helper',
+      name: 'build_helper_dl',
+      arch: "aarch64",
+      tag: "${CI_IMAGE_TAG}",
+      build_args: '--build-arg BASE_IMAGE=dockerhub.nvidia.com/ubuntu:24.04 --build-arg ARCH=aarch64'
+    }
+
+matrix:
+  axes:
+    arch:
+      - aarch64
+    framework:
+      - vllm
+      - sglang
+
+taskName: "${framework}/${arch}/${axis_index}"
+
+steps:
+  - name: Allocate DL Environment
+    containerSelector: "{name: 'build_helper_dl'}"
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: allocation
+    args:
+      partition: "${SLURM_PARTITION}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      nodes: "${SLURM_NODES}"
+      jobTimeout: "${SLURM_JOB_TIMEOUT}"
+      immediateTimeout: "${SLURM_IMMEDIATE_TIMEOUT}"
+      jobName: "nixl-vs-${framework}-${BUILD_NUMBER}"
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${framework}_${BUILD_NUMBER}.txt"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      extraArgs: [
+        "--account=${SLURM_ACCOUNT}",
+        "--gres=${SLURM_GRES}"
+      ]
+
+  - name: Run vLLM/SGLang sanity (DL)
+    containerSelector: "{name: 'build_helper_dl'}"
+    timeout: 40
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${framework}_${BUILD_NUMBER}.txt"
+      testScript: ".gitlab/test_vllm_sglang_sanity.sh ${framework}"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/${framework}-nixl:${sha1}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-vs-${framework}-${BUILD_NUMBER}"
+
+pipeline_stop:
+  containerSelector: "{name: 'build_helper_dl'}"
+  parallel: false
+  shell: action
+  module: slurmCI
+  run: stopAllForBuild
+  args:
+    credentialsId: "${SSH_CREDENTIALS_ID}"
+    headNode: "${SLURM_HEAD_NODE}"
+    headUser: "${SLURM_HEAD_USER}"
+    jobIdDir: "${JOB_ID_FILE_ROOT}"

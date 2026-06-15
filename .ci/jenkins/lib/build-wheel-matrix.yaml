@@ -110,6 +110,10 @@ env:
   GRPC_NPROC: 10
   BASE_IMAGE: "${registry_host}/sw-nbu-swx-nixl-docker-local/base/cuda"
   BASE_TAG: '13.0-devel-manylinux--25.09'
+  # Registry for the nightly vLLM/SGLang weights-base images (built by build-container).
+  VERIFICATION_REGISTRY: "${registry_host}/sw-nbu-swx-nixl-docker-local/verification"
+  # registry_path already = /sw-nbu-swx-nixl-docker-local/ci ; per-PR sanity images go under pr/.
+  PR_REGISTRY: "${registry_host}${registry_path}"
 
 steps:
   # =============================================================================
@@ -146,6 +150,48 @@ steps:
         --python-versions "${python_version}" \
         --arch ${arch} \
         --dockerfile contrib/Dockerfile.manylinux
+
+  # =============================================================================
+  # Step 3: Build per-PR vLLM/SGLang sanity images (reuse the wheels just built)
+  # =============================================================================
+  # No second wheel build: extract the wheels from the manylinux image produced by
+  # the previous step, then build one thin image per framework FROM the nightly
+  # weights-base, force-reinstalling the PR wheels (via the existing Dockerfile.vllm
+  # / Dockerfile.sglang). Images are tagged by the PR-merged commit SHA (${sha1}) so
+  # the downstream nixl-ci-vllm-sglang job can pull the exact tag without knowing this
+  # job's BUILD_NUMBER.
+  - name: Build framework sanity images
+    parallel: false
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      set -eux
+      echo "$ARTIFACTORY_TOKEN" | docker login "https://${registry_host}" -u "$ARTIFACTORY_USER" --password-stdin
+
+      # build-container.sh (no --tag) tags the wheel image as nixl:<VERSION>; match only
+      # that local reference (the manylinux base repo path also contains "nixl", so a
+      # loose grep would mis-match it).
+      WHEEL_IMAGE="$(docker images --filter 'reference=nixl:*' --format '{{.Repository}}:{{.Tag}}' | head -n1)"
+      test -n "$WHEEL_IMAGE"
+      echo "Extracting wheels from ${WHEEL_IMAGE}"
+
+      WHEELS_DIR="$(pwd)/pr-wheels-${arch}"
+      rm -rf "$WHEELS_DIR" && mkdir -p "$WHEELS_DIR"
+      docker create --name "wheel-extract-${arch}" "$WHEEL_IMAGE"
+      docker cp "wheel-extract-${arch}:/workspace/nixl/dist/." "$WHEELS_DIR/"
+      docker rm -f "wheel-extract-${arch}"
+      ls "$WHEELS_DIR"/*.whl
+
+      # Build + push one image per framework from the weights-base, by SHA.
+      for fw in vllm sglang; do
+        BASE="${VERIFICATION_REGISTRY}/${fw}-nixl-base:${arch}-latest"
+        IMG="${PR_REGISTRY}/pr/${arch}/${fw}-nixl:${sha1}"
+        docker build --platform linux/${arch} \
+          --build-arg BASE_IMAGE="${BASE}" \
+          -f contrib/Dockerfile.${fw} \
+          -t "${IMG}" \
+          "$WHEELS_DIR/"
+        docker push "${IMG}"
+      done
 
 # =============================================================================
 # Task Naming Convention

@@ -36,6 +36,13 @@ env:
   ARTIFACTORY_CLEANUP_AGE: "3m" # 3 months
   LOCAL_TAG_BASE: "nixl-ci:build-"
   MAIL_FROM: "jenkins@nvidia.com"
+  # vLLM/SGLang weights-base build (BUILD_TARGET=vllm-base | sglang-base).
+  # Pin VLLM_BASE_UPSTREAM / SGLANG_BASE_UPSTREAM to a digest in production so the
+  # nightly base is reproducible (resolve digests via `docker inspect ... RepoDigests`).
+  VLLM_BASE_UPSTREAM: "vllm/vllm-openai:latest"
+  SGLANG_BASE_UPSTREAM: "lmsysorg/sglang:latest"
+  SANITY_MODEL_ID: "Qwen/Qwen2.5-0.5B-Instruct"
+  VERIFICATION_REGISTRY: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/verification"
 
 taskName: "${BUILD_TARGET}/${arch}"
 
@@ -53,8 +60,22 @@ pipeline_start:
     currentBuild.displayName += "-${buildName}-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
     env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
     env.ENABLE_NIXLBENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
+    // ===== TEMPORARY BOOTSTRAP — REVERT BEFORE MERGE =====
+    // Forced 'true' so the weights-base images can be built+pushed by running the existing
+    // build-container job once (any BUILD_TARGET) with sha1=<commit>, without re-applying the
+    // job-template to add the vllm-base/sglang-base choices. Restore the gated lines below
+    // (commented) before merging these changes.
+    env.ENABLE_VLLM_BASE_BUILD = 'true'    // REVERT: params.BUILD_TARGET == 'vllm-base' ? 'true' : 'false'
+    env.ENABLE_SGLANG_BASE_BUILD = 'true'  // REVERT: params.BUILD_TARGET == 'sglang-base' ? 'true' : 'false'
+    // ===== END TEMPORARY BOOTSTRAP =====
+    // nixl/nixlbench use the shared LOCAL_TAG_BASE version-info + push machinery;
+    // the vllm-base/sglang-base targets push their own image inline, so the shared
+    // Add Version Info / Push / Show Results steps must be skipped for them.
+    env.ENABLE_IMAGE_PUBLISH = (params.BUILD_TARGET == 'nixl' || params.BUILD_TARGET == 'nixlbench') ? 'true' : 'false'
     echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
+    echo "ENABLE_VLLM_BASE_BUILD: ${env.ENABLE_VLLM_BASE_BUILD}"
+    echo "ENABLE_SGLANG_BASE_BUILD: ${env.ENABLE_SGLANG_BASE_BUILD}"
     echo "BUILD_TARGET: ${params.BUILD_TARGET}"
     echo "BUILD_NIXL_EP: ${params.BUILD_NIXL_EP}"
 
@@ -108,7 +129,38 @@ steps:
         --no-cache \
         ${NIXL_EP_FLAG}
 
+  - name: Build vLLM weights-base
+    enable: ${ENABLE_VLLM_BASE_BUILD}
+    containerSelector: "{name: 'podman'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      set -x
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      IMG="${VERIFICATION_REGISTRY}/vllm-nixl-base:${arch}-latest"
+      docker build --platform linux/${arch} \
+        -f contrib/Dockerfile.vllm-base \
+        --build-arg BASE_IMAGE="${VLLM_BASE_UPSTREAM}" \
+        --build-arg MODEL_ID="${SANITY_MODEL_ID}" \
+        -t "${IMG}" .
+      docker push "${IMG}"
+
+  - name: Build SGLang weights-base
+    enable: ${ENABLE_SGLANG_BASE_BUILD}
+    containerSelector: "{name: 'podman'}"
+    credentialsId: 'svc-nixl-new-artifactory-token'
+    run: |
+      set -x
+      echo "$ARTIFACTORY_PASSWORD" | docker login "${REGISTRY_HOST_NAME}" -u "$ARTIFACTORY_USERNAME" --password-stdin
+      IMG="${VERIFICATION_REGISTRY}/sglang-nixl-base:${arch}-latest"
+      docker build --platform linux/${arch} \
+        -f contrib/Dockerfile.sglang-base \
+        --build-arg BASE_IMAGE="${SGLANG_BASE_UPSTREAM}" \
+        --build-arg MODEL_ID="${SANITY_MODEL_ID}" \
+        -t "${IMG}" .
+      docker push "${IMG}"
+
   - name: Add Version Info
+    enable: ${ENABLE_IMAGE_PUBLISH}
     containerSelector: "{name: 'podman'}"
     run: |
       git config --global --add safe.directory '*'
@@ -147,6 +199,7 @@ steps:
       docker rm -f tempcontainer || true
 
   - name: Push
+    enable: ${ENABLE_IMAGE_PUBLISH}
     containerSelector: "{name: 'podman'}"
     credentialsId: 'svc-nixl-new-artifactory-token'
     run: |
@@ -181,6 +234,7 @@ steps:
       fi
 
   - name: Show Results
+    enable: ${ENABLE_IMAGE_PUBLISH}
     run: |
       source version-info
       echo "Image type built: ${BUILD_TARGET} (${arch})"
