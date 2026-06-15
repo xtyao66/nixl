@@ -17,7 +17,7 @@
 # NIXL is intentionally NOT installed here; the per-PR build (Dockerfile.vllm)
 # layers the freshly-built PR wheels on top of this image. Baking the weights in
 # nightly keeps the per-PR path free of any HuggingFace / Docker Hub dependency.
-ARG BASE_IMAGE=vllm/vllm-openai:latest
+ARG BASE_IMAGE=docker.io/vllm/vllm-openai:latest
 FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 
 ARG MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct

@@ -16,7 +16,7 @@
 # Nightly base image: pinned upstream SGLang + baked-in test model weights.
 # NIXL is intentionally NOT installed here; the per-PR build (Dockerfile.sglang)
 # layers the freshly-built PR wheels on top of this image.
-ARG BASE_IMAGE=lmsysorg/sglang:latest
+ARG BASE_IMAGE=docker.io/lmsysorg/sglang:latest
 FROM --platform=$TARGETPLATFORM ${BASE_IMAGE}
 
 ARG MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct

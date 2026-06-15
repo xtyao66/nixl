@@ -39,8 +39,10 @@ env:
   # vLLM/SGLang weights-base build (BUILD_TARGET=vllm-base | sglang-base).
   # Pin VLLM_BASE_UPSTREAM / SGLANG_BASE_UPSTREAM to a digest in production so the
   # nightly base is reproducible (resolve digests via `docker inspect ... RepoDigests`).
-  VLLM_BASE_UPSTREAM: "vllm/vllm-openai:latest"
-  SGLANG_BASE_UPSTREAM: "lmsysorg/sglang:latest"
+  # Fully qualified (docker.io/) — podman runs with short-name-mode=enforcing and cannot
+  # resolve bare short names without a TTY. Pin to a digest in production.
+  VLLM_BASE_UPSTREAM: "docker.io/vllm/vllm-openai:latest"
+  SGLANG_BASE_UPSTREAM: "docker.io/lmsysorg/sglang:latest"
   SANITY_MODEL_ID: "Qwen/Qwen2.5-0.5B-Instruct"
   VERIFICATION_REGISTRY: "${REGISTRY_HOST_NAME}/${REGISTRY_REPO_NAME}/verification"
 
@@ -58,20 +60,26 @@ pipeline_start:
     def suffix = params.TAG_SUFFIX ? "-${params.TAG_SUFFIX}" : ""
     def buildName = params.BUILD_TARGET
     currentBuild.displayName += "-${buildName}-${params.NIXL_VERSION}-${params.UCX_VERSION}${suffix}"
-    env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
-    env.ENABLE_NIXLBENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
     // ===== TEMPORARY BOOTSTRAP — REVERT BEFORE MERGE =====
-    // Forced 'true' so the weights-base images can be built+pushed by running the existing
-    // build-container job once (any BUILD_TARGET) with sha1=<commit>, without re-applying the
-    // job-template to add the vllm-base/sglang-base choices. Restore the gated lines below
-    // (commented) before merging these changes.
-    env.ENABLE_VLLM_BASE_BUILD = 'true'    // REVERT: params.BUILD_TARGET == 'vllm-base' ? 'true' : 'false'
-    env.ENABLE_SGLANG_BASE_BUILD = 'true'  // REVERT: params.BUILD_TARGET == 'sglang-base' ? 'true' : 'false'
+    // Build ONLY the vLLM/SGLang weights-base images on any build-container trigger, so the
+    // bases can be produced once with sha1=<commit> and no JJB change. The heavy nixl/
+    // nixlbench build and its version-info/push steps are forced OFF so the run goes straight
+    // to the base images. Before merging, delete this block and restore the gated lines below.
+    env.ENABLE_NIXL_BUILD = 'false'
+    env.ENABLE_NIXLBENCH_BUILD = 'false'
+    env.ENABLE_IMAGE_PUBLISH = 'false'
+    env.ENABLE_VLLM_BASE_BUILD = 'true'
+    env.ENABLE_SGLANG_BASE_BUILD = 'true'
+    // --- restore before merge ---
+    // env.ENABLE_NIXL_BUILD = params.BUILD_TARGET == 'nixl' ? 'true' : 'false'
+    // env.ENABLE_NIXLBENCH_BUILD = params.BUILD_TARGET == 'nixlbench' ? 'true' : 'false'
+    // env.ENABLE_VLLM_BASE_BUILD = params.BUILD_TARGET == 'vllm-base' ? 'true' : 'false'
+    // env.ENABLE_SGLANG_BASE_BUILD = params.BUILD_TARGET == 'sglang-base' ? 'true' : 'false'
+    // // nixl/nixlbench use the shared LOCAL_TAG_BASE version-info + push machinery; the
+    // // vllm-base/sglang-base targets push their own image inline, so the shared
+    // // Add Version Info / Push / Show Results steps must be skipped for them.
+    // env.ENABLE_IMAGE_PUBLISH = (params.BUILD_TARGET == 'nixl' || params.BUILD_TARGET == 'nixlbench') ? 'true' : 'false'
     // ===== END TEMPORARY BOOTSTRAP =====
-    // nixl/nixlbench use the shared LOCAL_TAG_BASE version-info + push machinery;
-    // the vllm-base/sglang-base targets push their own image inline, so the shared
-    // Add Version Info / Push / Show Results steps must be skipped for them.
-    env.ENABLE_IMAGE_PUBLISH = (params.BUILD_TARGET == 'nixl' || params.BUILD_TARGET == 'nixlbench') ? 'true' : 'false'
     echo "ENABLE_NIXL_BUILD: ${env.ENABLE_NIXL_BUILD}"
     echo "ENABLE_NIXLBENCH_BUILD: ${env.ENABLE_NIXLBENCH_BUILD}"
     echo "ENABLE_VLLM_BASE_BUILD: ${env.ENABLE_VLLM_BASE_BUILD}"
