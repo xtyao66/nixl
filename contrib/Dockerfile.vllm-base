@@ -29,7 +29,8 @@ ENV HF_HOME=${MODEL_DIR}/hf-home
 
 # huggingface_hub ships in the vLLM image; download once at build time so PR runs
 # never touch HuggingFace. A token is only needed for gated models (default is ungated).
+# Use the `hf` CLI (huggingface-cli is removed in recent huggingface_hub).
 RUN python3 -m pip install --no-cache-dir --upgrade "huggingface_hub[cli]" \
- && huggingface-cli download "${MODEL_ID}" \
+ && hf download "${MODEL_ID}" \
       --local-dir "${MODEL_DIR}/${MODEL_ID}" \
  && ls -la "${MODEL_DIR}/${MODEL_ID}"

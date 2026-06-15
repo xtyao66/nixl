@@ -26,7 +26,8 @@ ENV NIXL_SANITY_MODEL_ID=${MODEL_ID}
 ENV NIXL_SANITY_MODEL_DIR=${MODEL_DIR}
 ENV HF_HOME=${MODEL_DIR}/hf-home
 
+# Use the `hf` CLI (huggingface-cli is removed in recent huggingface_hub).
 RUN python3 -m pip install --no-cache-dir --upgrade "huggingface_hub[cli]" \
- && huggingface-cli download "${MODEL_ID}" \
+ && hf download "${MODEL_ID}" \
       --local-dir "${MODEL_DIR}/${MODEL_ID}" \
  && ls -la "${MODEL_DIR}/${MODEL_ID}"
